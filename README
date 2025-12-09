@@ -4,4 +4,4 @@ und danach mit CloudFormation eine cloudformation.yml ausliest. Dabei wird das d
 hochgefahren, die jeweils einen Elastic Load Balancer davor geschaltet haben. CloudWatch schickt dabei eine E-Mail raus, die den Statusbericht der CodePipeline enthält.
 Im Bild unten ist die Architektur aufgezeichnet.
 
-![infrastructure](https://github.com/AlexBuerklen/it_infra_project/blob/56db5fe115efbc77881817b26e39e5f743b723c7/it_infra_modell.png)
+![image alt](https://github.com/AlexBuerklen/it_infra_project/blob/687e24fcd263c6ed783e178a7b35886513b9b78d/it_infra_modell.png)
