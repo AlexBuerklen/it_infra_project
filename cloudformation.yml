@@ -1,148 +1,85 @@
-AWSTemplateFormatVersion: "2010-09-09"
-Description: >
-  ALB + Auto Scaling Group with Launch Template.
-  EC2 instances pull and run an ECR image tagged with InstanceVersion.
-
 Parameters:
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC where ALB and EC2 instances will be deployed
-
-  ALBSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: >
-      Public subnets for the internet-facing ALB (at least two, in different AZs)
-
-  InstanceSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: >
-      Subnets for EC2 instances (usually private). Must have egress to ECR
-      via NAT or VPC endpoints.
-
-  InstanceType:
-    Type: String
-    Default: t2.micro
-    AllowedValues:
-      - t2.micro
-      - t3.micro
-      - t3.small
-    Description: EC2 instance type for ASG
-
   InstanceVersion:
     Type: String
     Default: "latest"
-    Description: Docker image tag to deploy from ECR
-
-  ECRRepositoryUri:
-    Type: String
-    Description: >
-      Full ECR repository URI without tag, e.g.
-      123456789012.dkr.ecr.eu-west-1.amazonaws.com/alex_it_infra_project
-
-  ContainerPort:
-    Type: Number
-    Default: 8080
-    Description: Container port exposed by the application
-
-  HealthCheckPath:
-    Type: String
-    Default: "/"
-    Description: ALB health check path
-
-Mappings: {}
 
 Resources:
-
-  # -------------------------
-  # Security Groups
-  # -------------------------
-
-  AlexBALBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
+  AlexBLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      GroupDescription: Allow HTTP from internet to ALB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
+      InstanceType: t2.micro
+      ImageId: ami-03ca36368dbc9cfa1
+      SecurityGroups:
+        - !Ref AlexBSecurityGroup
+      IamInstanceProfile: !Ref AlexBEC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          echo "Updating system packages..."
+          yum update -y
+          echo "Installing Docker..."
+          dnf install docker -y
+          echo "Starting Docker..."
+          systemctl start docker
+          echo "Adding ec2-user to Docker group..."
+          usermod -a -G docker ec2-user
+
+          echo "Logging into Amazon ECR..."
+          $(aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 897729109985.dkr.ecr.eu-west-1.amazonaws.com)
+
+          echo "Pulling the latest Docker image..."
+          docker pull --quiet --disable-content-trust=true 897729109985.dkr.ecr.eu-west-1.amazonaws.com/alex_it_infra_project:${InstanceVersion}
+
+          echo "Stopping any running containers..."
+          docker stop $(docker ps -q --filter ancestor=897729109985.dkr.ecr.eu-west-1.amazonaws.com/alex_it_infra_project:${InstanceVersion}) || true
+
+          echo "Removing the old Docker image..."
+          docker rmi 897729109985.dkr.ecr.eu-west-1.amazonaws.com/alex_it_infra_project:${InstanceVersion} || true
+
+          echo "Running the new Docker container..."
+          docker run -d -p 80:8080 --rm 897729109985.dkr.ecr.eu-west-1.amazonaws.com/alex_it_infra_project:${InstanceVersion}
+
+  AlexBAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchConfigurationName: !Ref AlexBLaunchConfiguration
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+      AvailabilityZones: !GetAZs ''
+      TargetGroupARNs:
+        - !Ref AlexBTargetGroup
       Tags:
         - Key: Name
-          Value: AlexB-ALB-SG
-
-  AlexBEC2SecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Allow HTTP only from ALB
-      VpcId: !Ref VpcId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          SourceSecurityGroupId: !Ref AlexBALBSecurityGroup
-      Tags:
-        - Key: Name
-          Value: AlexB-EC2-SG
-
-  # -------------------------
-  # IAM for EC2 to pull ECR
-  # -------------------------
-
-  AlexBECRAccessRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ec2.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
-      Tags:
-        - Key: Name
-          Value: AlexB-ECR-ReadOnly-Role
-
-  AlexBEC2InstanceProfile:
-    Type: AWS::IAM::InstanceProfile
-    Properties:
-      Roles:
-        - !Ref AlexBECRAccessRole
-
-  # -------------------------
-  # Load Balancer + TG + Listener
-  # -------------------------
+          Value: AlexBEC2Instanz
+          PropagateAtLaunch: true
+    DependsOn: AlexBSecurityGroup
 
   AlexBLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: AlexBSecurityGroup
     Properties:
+      Name: AlexBLoadBalancer
       Scheme: internet-facing
       Type: application
       SecurityGroups:
-        - !Ref AlexBALBSecurityGroup
-      Subnets: !Ref ALBSubnets
+        - !Ref AlexBSecurityGroup
+      Subnets: 
+        - subnet-0df5f35e24f2ad1b5
+        - subnet-0fe0163065a6cc46b
       Tags:
         - Key: Name
-          Value: AlexB-ALB
+          Value: AlexBLoadBalancer
 
   AlexBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
+      Name: AlexBTargetGroup
       Protocol: HTTP
       Port: 80
       TargetType: instance
-      VpcId: !Ref VpcId
+      VpcId: 'vpc-0acfaa03995941f03'
       HealthCheckEnabled: true
-      HealthCheckProtocol: HTTP
-      HealthCheckPort: traffic-port
-      HealthCheckPath: !Ref HealthCheckPath
-      Matcher:
-        HttpCode: "200-399"
-      Tags:
-        - Key: Name
-          Value: AlexB-TG
 
   AlexBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -154,90 +91,41 @@ Resources:
       Port: 80
       Protocol: HTTP
 
-  # -------------------------
-  # Launch Template
-  # -------------------------
-
-  AlexBLaunchTemplate:
-    Type: AWS::EC2::LaunchTemplate
+  AlexBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      LaunchTemplateData:
-        InstanceType: !Ref InstanceType
+      GroupDescription: Enable HTTP access
+      VpcId: 'vpc-0acfaa03995941f03'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
 
-        # Amazon Linux 2023 (x86_64) via SSM dynamic reference
-        ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64}}"
-
-        SecurityGroupIds:
-          - !Ref AlexBEC2SecurityGroup
-
-        IamInstanceProfile:
-          Arn: !GetAtt AlexBEC2InstanceProfile.Arn
-
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            set -euxo pipefail
-
-            echo "Updating system packages..."
-            dnf update -y
-
-            echo "Installing Docker..."
-            dnf install -y docker
-
-            echo "Enabling and starting Docker..."
-            systemctl enable --now docker
-
-            echo "Adding ec2-user to Docker group..."
-            usermod -a -G docker ec2-user || true
-
-            echo "Logging into Amazon ECR in region ${AWS::Region}..."
-            aws ecr get-login-password --region ${AWS::Region} \
-              | docker login --username AWS --password-stdin ${ECRRepositoryUri%/*}
-
-            echo "Pulling Docker image ${ECRRepositoryUri}:${InstanceVersion}..."
-            docker pull --quiet --disable-content-trust=true ${ECRRepositoryUri}:${InstanceVersion}
-
-            echo "Stopping any running containers of this image..."
-            docker ps -q --filter ancestor=${ECRRepositoryUri}:${InstanceVersion} \
-              | xargs -r docker stop || true
-
-            echo "Running the new Docker container..."
-            docker run -d -p 80:${ContainerPort} --restart unless-stopped \
-              ${ECRRepositoryUri}:${InstanceVersion}
-
-  # -------------------------
-  # Auto Scaling Group
-  # -------------------------
-
-  AlexBAutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
+  AlexBEC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
     Properties:
-      MinSize: 1
-      MaxSize: 3
-      DesiredCapacity: 2
+      Roles:
+        - !Ref AlexBECRAccessRole
 
-      VPCZoneIdentifier: !Ref InstanceSubnets
-
-      LaunchTemplate:
-        LaunchTemplateId: !Ref AlexBLaunchTemplate
-        Version: !GetAtt AlexBLaunchTemplate.LatestVersionNumber
-
-      TargetGroupARNs:
-        - !Ref AlexBTargetGroup
-
-      HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
-
-      Tags:
-        - Key: Name
-          Value: AlexB-EC2
-          PropagateAtLaunch: true
-
-Outputs:
-  LoadBalancerDNSName:
-    Description: DNS name of the Application Load Balancer
-    Value: !GetAtt AlexBLoadBalancer.DNSName
-
-  TargetGroupArn:
-    Description: ARN of the target group
-    Value: !Ref AlexBTargetGroup
+  AlexBECRAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ECRAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
