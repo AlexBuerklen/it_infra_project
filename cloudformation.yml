@@ -65,8 +65,8 @@ Resources:
       SecurityGroups:
         - !Ref AlexBSecurityGroup
       Subnets: 
-        - subnet-0df5f35e24f2ad1b5
-        - subnet-0fe0163065a6cc46b
+        - subnet-08330a0627c9fca46
+        - subnet-0baed77522e17f90c
       Tags:
         - Key: Name
           Value: AlexBLoadBalancer
