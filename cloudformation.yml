@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: AlexB Infra - ALB + ASG + EC2 running Docker from ECR
+Description: AlexB Infra - ALB + ASG + EC2 running Docker from ECR (with dynamic latest Amazon Linux AMI)
 
 Parameters:
   InstanceVersion:
@@ -9,6 +9,10 @@ Parameters:
   RepositoryName:
     Type: String
     Default: "alex_it_infra_project"
+    
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64
 
   VpcId:
     Type: AWS::EC2::VPC::Id
@@ -22,7 +26,6 @@ Parameters:
     Description: Subnets for the AutoScalingGroup instances
 
 Resources:
-  # Security Group for ALB and EC2 (simple setup)
   AlexBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -34,7 +37,6 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
-  # IAM Instance Profile + Role for EC2 to pull from ECR
   AlexBEC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -68,14 +70,13 @@ Resources:
                   - ecr:DescribeImages
                 Resource: "*"
 
-  # Launch Template (replaces Launch Configuration)
   AlexBLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateName: !Sub "AlexBLaunchTemplate-${AWS::StackName}"
       LaunchTemplateData:
         InstanceType: t2.micro
-        ImageId: ami-03ca36368dbc9cfa1
+        ImageId: !Ref LatestAmiId
         SecurityGroupIds:
           - !Ref AlexBSecurityGroup
         IamInstanceProfile:
@@ -124,7 +125,6 @@ Resources:
               --restart unless-stopped \
               "$IMAGE"
 
-  # Target Group
   AlexBTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
@@ -135,7 +135,6 @@ Resources:
       VpcId: !Ref VpcId
       HealthCheckEnabled: true
 
-  # Load Balancer
   AlexBLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -149,7 +148,6 @@ Resources:
         - Key: Name
           Value: AlexBLoadBalancer
 
-  # Listener
   AlexBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -160,7 +158,6 @@ Resources:
       Port: 80
       Protocol: HTTP
 
-  # Auto Scaling Group using Launch Template
   AlexBAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
