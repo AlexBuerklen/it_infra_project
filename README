@@ -3,3 +3,5 @@ eine einfache HTML Seite erstellt wurde. Dabei initiiert ein GitHub Push auf dem
 und danach mit CloudFormation eine cloudformation.yml ausliest. Dabei wird das docker image in einem S3 Bucket gespeichert und mithilfe von CloudFormation zwei EC2-Instanzen 
 hochgefahren, die jeweils einen Elastic Load Balancer davor geschaltet haben. CloudWatch schickt dabei eine E-Mail raus, die den Statusbericht der CodePipeline enthält.
 Im Bild unten ist die Architektur aufgezeichnet.
+
+<img width="1206" height="483" alt="Image" src="https://github.com/user-attachments/assets/41e63190-155d-495c-8897-89617a65323c" />
