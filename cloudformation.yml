@@ -1,3 +1,6 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: AlexB Infra - ALB + ASG + EC2 running Docker from ECR
+
 Parameters:
   InstanceVersion:
     Type: String
@@ -19,107 +22,7 @@ Parameters:
     Description: Subnets for the AutoScalingGroup instances
 
 Resources:
-  AlexBLaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
-    Properties:
-      InstanceType: t2.micro
-      ImageId: ami-03ca36368dbc9cfa1
-      SecurityGroups:
-        - !Ref AlexBSecurityGroup
-      IamInstanceProfile: !Ref AlexBEC2InstanceProfile
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          set -e
-
-          echo "Updating system packages..."
-          yum update -y
-
-          echo "Installing Docker..."
-          yum install -y docker
-
-          echo "Starting Docker..."
-          systemctl enable docker
-          systemctl start docker
-
-          echo "Adding ec2-user to Docker group..."
-          usermod -a -G docker ec2-user
-
-          echo "Logging into Amazon ECR..."
-          aws ecr get-login-password --region ${AWS::Region} | \
-            docker login --username AWS --password-stdin \
-            ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
-
-          IMAGE="${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryName}:${InstanceVersion}"
-
-          echo "Ensuring image is available locally..."
-          if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-            echo "Image not found locally. Pulling $IMAGE..."
-            docker pull "$IMAGE"
-          else
-            echo "Image already present locally. Skipping pull."
-          fi
-
-          echo "Stopping existing container if present..."
-          docker stop app || true
-          docker rm app || true
-
-          echo "Running container..."
-          docker run -d \
-            --name app \
-            -p 80:8080 \
-            --restart unless-stopped \
-            "$IMAGE"
-
-  AlexBAutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      LaunchConfigurationName: !Ref AlexBLaunchConfiguration
-      MinSize: 1
-      MaxSize: 3
-      DesiredCapacity: 2
-      VPCZoneIdentifier: !Ref AppSubnets
-      TargetGroupARNs:
-        - !Ref AlexBTargetGroup
-      Tags:
-        - Key: Name
-          Value: AlexBEC2Instanz
-          PropagateAtLaunch: true
-    DependsOn: AlexBSecurityGroup
-
-  AlexBLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: AlexBLoadBalancer
-      Scheme: internet-facing
-      Type: application
-      SecurityGroups:
-        - !Ref AlexBSecurityGroup
-      Subnets: !Ref PublicSubnets
-      Tags:
-        - Key: Name
-          Value: AlexBLoadBalancer
-
-  AlexBTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: AlexBTargetGroup
-      Protocol: HTTP
-      Port: 80
-      TargetType: instance
-      VpcId: !Ref VpcId
-      HealthCheckEnabled: true
-
-  AlexBListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref AlexBTargetGroup
-      LoadBalancerArn: !Ref AlexBLoadBalancer
-      Port: 80
-      Protocol: HTTP
-
+  # Security Group for ALB and EC2 (simple setup)
   AlexBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -131,6 +34,7 @@ Resources:
           ToPort: 80
           CidrIp: 0.0.0.0/0
 
+  # IAM Instance Profile + Role for EC2 to pull from ECR
   AlexBEC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
@@ -163,3 +67,114 @@ Resources:
                   - ecr:BatchGetImage
                   - ecr:DescribeImages
                 Resource: "*"
+
+  # Launch Template (replaces Launch Configuration)
+  AlexBLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "AlexBLaunchTemplate-${AWS::StackName}"
+      LaunchTemplateData:
+        InstanceType: t2.micro
+        ImageId: ami-03ca36368dbc9cfa1
+        SecurityGroupIds:
+          - !Ref AlexBSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref AlexBEC2InstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            set -e
+
+            echo "Updating system packages..."
+            yum update -y
+
+            echo "Installing Docker..."
+            yum install -y docker
+
+            echo "Starting Docker..."
+            systemctl enable docker
+            systemctl start docker
+
+            echo "Adding ec2-user to Docker group..."
+            usermod -a -G docker ec2-user
+
+            echo "Logging into Amazon ECR..."
+            aws ecr get-login-password --region ${AWS::Region} | \
+              docker login --username AWS --password-stdin \
+              ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+
+            IMAGE="${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RepositoryName}:${InstanceVersion}"
+
+            echo "Ensuring image is available locally..."
+            if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+              echo "Image not found locally. Pulling $IMAGE..."
+              docker pull "$IMAGE"
+            else
+              echo "Image already present locally. Skipping pull."
+            fi
+
+            echo "Stopping existing container if present..."
+            docker stop app || true
+            docker rm app || true
+
+            echo "Running container..."
+            docker run -d \
+              --name app \
+              -p 80:8080 \
+              --restart unless-stopped \
+              "$IMAGE"
+
+  # Target Group
+  AlexBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: AlexBTargetGroup
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      VpcId: !Ref VpcId
+      HealthCheckEnabled: true
+
+  # Load Balancer
+  AlexBLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: AlexBLoadBalancer
+      Scheme: internet-facing
+      Type: application
+      SecurityGroups:
+        - !Ref AlexBSecurityGroup
+      Subnets: !Ref PublicSubnets
+      Tags:
+        - Key: Name
+          Value: AlexBLoadBalancer
+
+  # Listener
+  AlexBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlexBTargetGroup
+      LoadBalancerArn: !Ref AlexBLoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  # Auto Scaling Group using Launch Template
+  AlexBAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      MinSize: 1
+      MaxSize: 3
+      DesiredCapacity: 2
+      VPCZoneIdentifier: !Ref AppSubnets
+      TargetGroupARNs:
+        - !Ref AlexBTargetGroup
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AlexBLaunchTemplate
+        Version: !GetAtt AlexBLaunchTemplate.LatestVersionNumber
+      Tags:
+        - Key: Name
+          Value: AlexBEC2Instanz
+          PropagateAtLaunch: true
+    DependsOn: AlexBSecurityGroup
