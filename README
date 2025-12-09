@@ -1,0 +1,5 @@
+Das Projekt wurde im Rahmen des Moduls "IT-Infrastruktur" durchgeführt. Hierbei geht es um eine CI/CD Pipeline, wo mithilfe von Services wie CodePipeline, CodeBuild und Cloudformation
+eine einfache HTML Seite erstellt wurde. Dabei initiiert ein GitHub Push auf dem Main Branch ein Trigger in CodePipeline, welcher mithilfe von CodeBuild ein Docker Image erstellt
+und danach mit CloudFormation eine cloudformation.yml ausliest. Dabei wird das docker image in einem S3 Bucket gespeichert und mithilfe von CloudFormation zwei EC2-Instanzen 
+hochgefahren, die jeweils einen Elastic Load Balancer davor geschaltet haben. CloudWatch schickt dabei eine E-Mail raus, die den Statusbericht der CodePipeline enthält.
+Im Bild unten ist die Architektur aufgezeichnet.
