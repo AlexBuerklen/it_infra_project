@@ -8,9 +8,9 @@ phases:
   build:
     commands:
       - echo Building the Docker image...
-      - docker build --no-cache -t it-infra-project .
+      - docker build --no-cache -t my-app-image .
       - echo Tagging the Docker image...
-      - docker tag it-infra-project:latest 228383006049.dkr.ecr.eu-central-1.amazonaws.com/alex_it_infra_project:latest
+      - docker tag my-app-image:latest 228383006049.dkr.ecr.eu-central-1.amazonaws.com/alex_it_infra_project:latest
   post_build:
     commands:
       - echo Pushing the Docker image to ECR...
